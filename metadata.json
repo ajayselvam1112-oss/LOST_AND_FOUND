@@ -1,0 +1,6 @@
+{
+  "name": "DormFind",
+  "description": "Centralized hostel lost and found platform for students to report lost belongings, register found items, verify ownership, and safely coordinate returns.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
