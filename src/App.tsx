@@ -108,17 +108,21 @@ export default function App() {
     }, 4500);
   }
 
-  const loadBlocks = useCallback(async () => {
+  const loadBlocks = useCallback(async (attempt = 0): Promise<void> => {
     try {
       const res = await apiRequest<{ blocks: HostelBlock[] }>('/api/blocks');
       setBlocks(res.blocks);
-      if (res.blocks.length > 0 && selectedMapBlockId === null) {
-        setSelectedMapBlockId(res.blocks[0].id);
+      if (res.blocks.length > 0) {
+        setSelectedMapBlockId((prev) => prev ?? res.blocks[0].id);
       }
     } catch {
-      // Keep graceful UI
+      if (attempt < 2) {
+        setTimeout(() => {
+          void loadBlocks(attempt + 1);
+        }, 800);
+      }
     }
-  }, [selectedMapBlockId]);
+  }, []);
 
   const loadItems = useCallback(async () => {
     setItemsLoading(true);
@@ -873,10 +877,20 @@ export default function App() {
         initialMode={authMode}
         blocks={blocks}
         onClose={() => setAuthModalOpen(false)}
-        onAuthenticated={(user) => {
+        onBlocksLoaded={(loaded) => {
+          setBlocks(loaded);
+          if (loaded.length > 0) {
+            setSelectedMapBlockId((prev) => prev ?? loaded[0].id);
+          }
+        }}
+        onAuthenticated={(user, mode) => {
           setCurrentUser(user);
           loadUserWorkspace(user);
-          showToast(`Welcome back, ${user.full_name}.`);
+          showToast(
+            mode === 'register'
+              ? `Welcome to DormFind, ${user.full_name}!`
+              : `Welcome back, ${user.full_name}.`
+          );
         }}
       />
 

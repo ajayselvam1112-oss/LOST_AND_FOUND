@@ -255,80 +255,100 @@ export function createApiRouter(): Router {
 
   // Auth routes
   router.post('/auth/register', (req, res: Response) => {
-    const parsed = registerSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: formatValidationError(parsed.error) });
-      return;
-    }
+    try {
+      const parsed = registerSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: formatValidationError(parsed.error) });
+        return;
+      }
 
-    const data = parsed.data;
-    const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(data.email);
-    if (existingEmail) {
-      res.status(409).json({ error: 'An account with this email already exists.' });
-      return;
-    }
-    const existingSid = db.prepare('SELECT id FROM users WHERE student_id = ?').get(data.student_id);
-    if (existingSid) {
-      res.status(409).json({ error: 'This Student ID is already registered.' });
-      return;
-    }
+      const data = parsed.data;
+      const normalizedEmail = data.email.toLowerCase();
+      const normalizedStudentId = data.student_id.toUpperCase();
 
-    const block = db.prepare('SELECT id FROM hostel_blocks WHERE id = ?').get(data.block_id);
-    if (!block) {
-      res.status(400).json({ error: 'Selected hostel block does not exist.' });
-      return;
-    }
+      const existingEmail = db
+        .prepare('SELECT id FROM users WHERE LOWER(email) = ?')
+        .get(normalizedEmail);
+      if (existingEmail) {
+        res.status(409).json({ error: 'An account with this email already exists.' });
+        return;
+      }
 
-    const passwordHash = bcrypt.hashSync(data.password, 10);
-    const result = db
-      .prepare(
-        `INSERT INTO users (full_name, email, password_hash, student_id, role, block_id, room_number, phone, points, returned_count, badge_tier)
-         VALUES (?, ?, ?, ?, 'student', ?, ?, ?, 0, 0, 'Campus Helper')`
-      )
-      .run(
-        data.full_name,
-        data.email,
-        passwordHash,
-        data.student_id.toUpperCase(),
-        data.block_id,
-        data.room_number,
-        data.phone
+      const existingSid = db
+        .prepare('SELECT id FROM users WHERE UPPER(student_id) = ?')
+        .get(normalizedStudentId);
+      if (existingSid) {
+        res.status(409).json({ error: 'This Student ID is already registered.' });
+        return;
+      }
+
+      const block = db.prepare('SELECT id FROM hostel_blocks WHERE id = ?').get(data.block_id);
+      if (!block) {
+        res.status(400).json({ error: 'Selected hostel block does not exist.' });
+        return;
+      }
+
+      const passwordHash = bcrypt.hashSync(data.password, 10);
+      const result = db
+        .prepare(
+          `INSERT INTO users (full_name, email, password_hash, student_id, role, block_id, room_number, phone, points, returned_count, badge_tier)
+           VALUES (?, ?, ?, ?, 'student', ?, ?, ?, 0, 0, 'Campus Helper')`
+        )
+        .run(
+          data.full_name,
+          normalizedEmail,
+          passwordHash,
+          normalizedStudentId,
+          data.block_id,
+          data.room_number,
+          data.phone
+        );
+
+      const userId = Number(result.lastInsertRowid);
+      createNotification(
+        userId,
+        'Welcome to DormFind',
+        'Your hostel student account is active. You can now report lost items, register found belongings, and verify claims safely.',
+        'system',
+        null
       );
 
-    const userId = Number(result.lastInsertRowid);
-    createNotification(
-      userId,
-      'Welcome to DormFind',
-      'Your hostel student account is active. You can now report lost items, register found belongings, and verify claims safely.',
-      'system',
-      null
-    );
-
-    const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-    const token = signToken(userId, 'student');
-    res.status(201).json({ token, user: sanitizeUser(userRow) });
+      const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+      const token = signToken(userId, 'student');
+      res.status(201).json({ token, user: sanitizeUser(userRow) });
+    } catch (err) {
+      console.error('Register error:', err);
+      res.status(500).json({ error: 'Unable to create account right now. Please try again.' });
+    }
   });
 
   router.post('/auth/login', (req, res: Response) => {
-    const parsed = loginSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: formatValidationError(parsed.error) });
-      return;
-    }
+    try {
+      const parsed = loginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: formatValidationError(parsed.error) });
+        return;
+      }
 
-    const { email, password } = parsed.data;
-    const userRow = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-    if (!userRow || !bcrypt.compareSync(password, userRow.password_hash)) {
-      res.status(401).json({ error: 'Invalid email or password.' });
-      return;
-    }
-    if (userRow.is_active !== 1) {
-      res.status(403).json({ error: 'Your account has been suspended. Please contact the hostel warden.' });
-      return;
-    }
+      const { email, password } = parsed.data;
+      const userRow = db
+        .prepare('SELECT * FROM users WHERE LOWER(email) = ?')
+        .get(email.toLowerCase()) as any;
+      if (!userRow || !bcrypt.compareSync(password, userRow.password_hash)) {
+        res.status(401).json({ error: 'Invalid email or password.' });
+        return;
+      }
+      if (userRow.is_active !== 1) {
+        res.status(403).json({ error: 'Your account has been suspended. Please contact the hostel warden.' });
+        return;
+      }
 
-    const token = signToken(userRow.id, userRow.role);
-    res.json({ token, user: sanitizeUser(userRow) });
+      const token = signToken(userRow.id, userRow.role);
+      res.json({ token, user: sanitizeUser(userRow) });
+    } catch (err) {
+      console.error('Login error:', err);
+      res.status(500).json({ error: 'Unable to sign in right now. Please try again.' });
+    }
   });
 
   router.post('/auth/logout', (_req, res: Response) => {
@@ -341,20 +361,25 @@ export function createApiRouter(): Router {
 
   // Hostel Blocks
   router.get('/blocks', (_req, res: Response) => {
-    const blocks = db
-      .prepare(
-        `SELECT b.*,
-                SUM(CASE WHEN i.status = 'Lost' THEN 1 ELSE 0 END) as lost_count,
-                SUM(CASE WHEN i.status IN ('Found', 'Verification Pending') THEN 1 ELSE 0 END) as found_count,
-                SUM(CASE WHEN i.status = 'Returned' THEN 1 ELSE 0 END) as returned_count,
-                COUNT(i.id) as total_items
-         FROM hostel_blocks b
-         LEFT JOIN items i ON i.block_id = b.id
-         GROUP BY b.id
-         ORDER BY b.id ASC`
-      )
-      .all();
-    res.json({ blocks });
+    try {
+      const blocks = db
+        .prepare(
+          `SELECT b.*,
+                  SUM(CASE WHEN i.status = 'Lost' THEN 1 ELSE 0 END) as lost_count,
+                  SUM(CASE WHEN i.status IN ('Found', 'Verification Pending') THEN 1 ELSE 0 END) as found_count,
+                  SUM(CASE WHEN i.status = 'Returned' THEN 1 ELSE 0 END) as returned_count,
+                  COUNT(i.id) as total_items
+           FROM hostel_blocks b
+           LEFT JOIN items i ON i.block_id = b.id
+           GROUP BY b.id
+           ORDER BY b.id ASC`
+        )
+        .all();
+      res.json({ blocks });
+    } catch (err) {
+      console.error('Blocks error:', err);
+      res.status(500).json({ error: 'Unable to load hostel blocks.' });
+    }
   });
 
   // Image upload (local verified storage)

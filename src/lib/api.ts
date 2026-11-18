@@ -1,14 +1,21 @@
 const TOKEN_STORAGE_KEY = 'dormfind_auth_token';
+let memoryToken: string | null = null;
 
 export function getStoredToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_STORAGE_KEY);
+    const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (stored) {
+      memoryToken = stored;
+      return stored;
+    }
   } catch {
-    return null;
+    // Fallback to in-memory token when storage is restricted in iframe contexts
   }
+  return memoryToken;
 }
 
 export function setStoredToken(token: string | null): void {
+  memoryToken = token;
   try {
     if (token) {
       localStorage.setItem(TOKEN_STORAGE_KEY, token);
@@ -16,7 +23,7 @@ export function setStoredToken(token: string | null): void {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   } catch {
-    // Ignore storage errors in restricted contexts
+    // Ignore storage errors in restricted contexts; memoryToken remains active
   }
 }
 
@@ -30,14 +37,29 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error('Unable to connect to the DormFind server. Please check your connection and try again.');
+  }
 
-  const payload = await response.json().catch(() => ({}));
+  const rawText = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+  }
+
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed (${response.status})`);
+    const serverMsg = typeof payload.error === 'string' ? payload.error : '';
+    throw new Error(serverMsg || `Request failed (${response.status})`);
   }
   return payload as T;
 }
